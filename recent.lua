@@ -36,23 +36,29 @@ local o = {
 local utils = require("mp.utils")
 o.log_path = utils.join_path(mp.find_config_file("."), o.log_path)
 
-local cur_title, cur_path
+local cur_title, cur_path, cur_time
+local empty = false
+local pause = false
+local lastVideoTime
+local offset = -0.65
 local list_drawn = false
 
 function esc_string(str)
     return str:gsub("([%p])", "%%%1")
 end
 
-function get_path()
-    local path = mp.get_property("path")
-    local title = mp.get_property("media-title"):gsub("\"", "")
-    if not path then return end
-    if path:find("http.?://") or path:find("magnet:%?") or path:find("rtmp://") then
-        return title, path
-    else
-        return title, utils.join_path(mp.get_property("working-directory"), path)
-    end
-end
+-- function get_path()
+--     path = mp.get_property("path")
+--     title = mp.get_property("media-title"):gsub("\"", "")
+--     -- local path = mp.get_property("path")
+--     -- local title = mp.get_property("media-title"):gsub("\"", "")
+--     -- if not path then return end
+--     -- if path:find("http.?://") or path:find("magnet:%?") or path:find("rtmp://") then
+--     --     return title, path
+--     -- else
+--     --     return title, utils.join_path(mp.get_property("working-directory"), path)
+--     -- end
+-- end
 
 function unbind()
     if o.mouse_controls then
@@ -64,6 +70,7 @@ function unbind()
     mp.remove_key_binding("recent-UP")
     mp.remove_key_binding("recent-DOWN")
     mp.remove_key_binding("recent-ENTER")
+    mp.remove_key_binding("recent-ENTER-RESUME")
     mp.remove_key_binding("recent-1")
     mp.remove_key_binding("recent-2")
     mp.remove_key_binding("recent-3")
@@ -93,9 +100,9 @@ end
 
 function read_log_table()
     return read_log(function(line)
-        local t, p
-        t, p = line:match("^.-\"(.-)\" | (.*)$")
-        return {title = t, path = p}
+        local t, p, ti
+        t, p, ti = line:match("^.-\"(.-)\"|(.*)|time=(.*)$")
+        return {title = t, path = p, time = ti}
     end)
 end
 
@@ -117,7 +124,7 @@ function write_log(delete)
         end
     end
     if not delete then
-        f:write(("[%s] \"%s\" | %s\n"):format(os.date(o.date_format), cur_title, cur_path))
+        f:write(("[%s] \"%s\"|%s|%s\n"):format(os.date(o.date_format), cur_title, cur_path, 'time='..cur_time))
     end
     f:close()
 end
@@ -126,13 +133,13 @@ end
 function draw_list(list, start, choice)
     local msg = string.format("{\\fscx%f}{\\fscy%f}{\\bord%f}",
                 o.font_scale, o.font_scale, o.border_size)
-    local hi_start = string.format("{\\1c&H%s}", o.hi_color)
-    local hi_end = "{\\1c&HFFFFFF}"
+    local hi_start = string.format("{\\b1\\1c&H%s}", o.hi_color)
+    local hi_end = "{\\b0\\1c&HFFFFFF}"
     if o.ellipsis then
         if start ~= 0 then
             msg = msg.."..."
         end
-        msg = msg.."\\h\\N\\N"
+        msg = msg.."\\N"
     end
     local size = #list
     for i=1, math.min(10, size-start), 1 do
@@ -148,9 +155,9 @@ function draw_list(list, start, choice)
             p = list[size-start-i+1].title or list[size-start-i+1].path or ""
         end
         if i == choice+1 then
-            msg = msg..hi_start.."("..key..")  "..p.."\\N\\N"..hi_end
+            msg = msg..hi_start.."("..key..") "..p.."\\N"..hi_end
         else
-            msg = msg.."("..key..")  "..p.."\\N\\N"
+            msg = msg.."("..key..") "..p.."\\N"
         end
         if not list_drawn then
             print("("..key..") "..p)
@@ -204,6 +211,103 @@ function load(list, start, choice)
     mp.commandv("loadfile", list[#list-start-choice].path, "replace")
 end
 
+function loadr(list, start, choice)
+    unbind()
+    if start+choice >= #list then return end
+    if o.write_watch_later then
+        mp.command("write-watch-later-config")
+    end
+    listresumetime = list[#list-start-choice].time + offset
+    mp.commandv("loadfile", list[#list-start-choice].path, "replace")
+    empty = loadr
+end
+
+function resume()
+	local historyLog = mp.find_config_file(".")..'/history.log'
+	local historyLogOpen = io.open(historyLog, 'r')
+    local cur_path = mp.get_property("path")
+	local linePosition
+	local videoFound
+	local currentVideo
+	local currentVideoTime
+	local seekTime
+
+	if (cur_path ~= nil) then
+		for line in historyLogOpen:lines() do
+
+		   linePosition = line:find('|')
+		   line = line:sub(linePosition + 1)
+
+			if line.match(line, '(.*)|time=') == cur_path then
+				videoFound = line
+			end
+
+		end
+
+	if (videoFound ~= nil) then
+		currentVideo = string.match(videoFound, '(.*)|time=')
+		currentVideoTime = string.match(videoFound, '|time=(.*)')
+
+		if (cur_path == currentVideo) and (currentVideoTime ~= nil) then
+			mp.osd_message('Resumed Last Position')
+
+			seekTime = currentVideoTime + offset
+			if (seekTime < 0) then
+				seekTime = 0
+			end
+
+			mp.commandv('seek', seekTime, 'absolute', 'exact')
+		end
+	else
+		mp.osd_message('No Resume Position')
+	end
+	else
+		empty = true
+		lastPlay()
+	end
+	historyLogOpen:close()
+end
+
+function lastPlay()
+	local historyLog = mp.find_config_file(".")..'/history.log'
+	local historyLogOpen = io.open(historyLog, 'r+')
+    local linePosition
+	local videoFile
+	local lastVideoFound
+
+	for line in historyLogOpen:lines() do
+		lastVideoFound = line
+	end
+	historyLogOpen:close()
+
+	if (lastVideoFound ~= nil) then
+		linePosition = lastVideoFound:find('|')
+		lastVideoFound = lastVideoFound:sub(linePosition + 1)
+
+		if string.match(lastVideoFound, '(.*)|time=') then
+			videoFile = string.match(lastVideoFound, '(.*)|time=')
+			lastVideoTime = string.match(lastVideoFound, '|time=(.*)')
+		else
+			videoFile = lastVideoFound
+		end
+
+		if (cur_path ~= nil) then
+			mp.osd_message('Added Last Item Into Playlist:\n'..videoFile)
+			mp.commandv('loadfile', videoFile, 'append-play')
+		else
+			if (empty == false) then
+				mp.osd_message('Loaded Last Item:\n'..videoFile)
+			else
+				mp.osd_message('Resumed Last Item:\n'..videoFile)
+			end
+			mp.commandv('loadfile', videoFile)
+		end
+	else
+		mp.osd_message('History is Empty')
+	end
+end
+
+
 -- Display list and add keybinds
 function display_list()
     if list_drawn then
@@ -228,6 +332,9 @@ function display_list()
     end, {repeatable=true})
     mp.add_forced_key_binding("ENTER", "recent-ENTER", function()
         load(list, start, choice)
+    end)
+    mp.add_forced_key_binding("SHIFT+ENTER", "recent-ENTER-RESUME", function()
+        loadr(list, start, choice)
     end)
     mp.add_forced_key_binding("DEL", "recent-DEL", function()
         delete(list, start, choice)
@@ -268,12 +375,13 @@ end
 if o.auto_save then
     -- Using hook, as at the "end-file" event the playback position info is already unset.
     mp.add_hook("on_unload", 9, function ()
-       local pos = mp.get_property("percent-pos")
-       if tonumber(pos) <= o.auto_save_skip_past then
+       timer:kill()
+    --    local pos = mp.get_property("percent-pos")
+    --    if tonumber(pos) <= o.auto_save_skip_past then
           write_log(false)
-       else
-          write_log(true)
-       end
+    --    else
+    --       write_log(true)
+    --    end
     end)
 else
     mp.add_key_binding(o.save_bind, "recent-save", function()
@@ -290,7 +398,58 @@ end
 
 mp.register_event("file-loaded", function()
     unbind()
-    cur_title, cur_path = get_path()
+    cur_path = mp.get_property("path")
+    cur_title = mp.get_property("media-title"):gsub("\"", "")
+    cur_time = 0
+    timer = mp.add_periodic_timer(1, function()
+		cur_time = cur_time + 1
+	end)
+
+    if (pause == true) then
+		timer:stop()
+	else
+		timer:resume()
+	end
+
+    if (empty == true) then
+		local seekTime
+		if (lastVideoTime ~= nil) then
+
+			seekTime = lastVideoTime + offset
+			if (seekTime < 0) then
+				seekTime = 0
+			end
+
+			mp.commandv('seek', seekTime, 'absolute', 'exact')
+
+			empty = false
+		end
+    elseif (empty == loadr) then
+        mp.commandv("seek", listresumetime, "absolute", "exact")
+        empty = false
+	end
+end)
+
+mp.register_event('playback-restart', function()
+    cur_time = 0
+	cur_time2 = math.floor(mp.get_property_number('time-pos') or 0)
+    cur_time = cur_time + cur_time2
+end)
+
+mp.observe_property('pause', 'bool', function(name, value)
+    if value then
+        if timer ~= nil then
+		timer:stop()
+        end
+        pause = true
+	else
+        if timer ~= nil then
+		timer:resume()
+        end
+        pause = false
+	end
 end)
 
 mp.add_key_binding(o.display_bind, "display-recent", display_list)
+mp.add_key_binding("ctrl+l", "lastPlay", lastPlay)
+mp.add_key_binding("ctrl+r", "resume", resume)
