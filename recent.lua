@@ -17,7 +17,7 @@ local o = {
     -- Scroll wheel: Up/Down
     mouse_controls = true,
     -- Reads from config directory or an absolute path
-    log_path = "history.log",
+    log_path = "mpvhistory.log",
     -- Date format in the log (see lua date formatting)
     date_format = "%d/%m/%y %X",
     -- Show file paths instead of media-title
@@ -34,7 +34,7 @@ local o = {
 }
 (require "mp.options").read_options(o)
 local utils = require("mp.utils")
-o.log_path = utils.join_path(mp.find_config_file("."), o.log_path)
+o.log_path = utils.join_path((os.getenv('APPDATA')) or (mp.find_config_file(".")), o.log_path)
 
 local cur_title, cur_path, cur_time
 local empty = false
@@ -131,10 +131,10 @@ end
 
 -- Display list on OSD and terminal
 function draw_list(list, start, choice)
-    local msg = string.format("{\\fscx%f}{\\fscy%f}{\\bord%f}",
-                o.font_scale, o.font_scale, o.border_size)
-    local hi_start = string.format("{\\b1\\1c&H%s}", o.hi_color)
-    local hi_end = "{\\b0\\1c&HFFFFFF}"
+    local msg = string.format("{\\fscx%f}{\\fscy%f}",
+                o.font_scale, o.font_scale)
+    local hi_start = string.format("{\\1c&H%s}", o.hi_color)
+    local hi_end = "{\\1c&HFFFFFF}"
     if o.ellipsis then
         if start ~= 0 then
             msg = msg.."..."
@@ -223,8 +223,7 @@ function loadr(list, start, choice)
 end
 
 function resume()
-	local historyLog = mp.find_config_file(".")..'/history.log'
-	local historyLogOpen = io.open(historyLog, 'r')
+	local historyLogOpen = io.open(o.log_path, 'r')
     local cur_path = mp.get_property("path")
 	local linePosition
 	local videoFound
@@ -269,8 +268,7 @@ function resume()
 end
 
 function lastPlay()
-	local historyLog = mp.find_config_file(".")..'/history.log'
-	local historyLogOpen = io.open(historyLog, 'r+')
+	local historyLogOpen = io.open(o.log_path, 'r+')
     local linePosition
 	local videoFile
 	local lastVideoFound
