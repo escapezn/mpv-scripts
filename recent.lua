@@ -38,10 +38,10 @@ o.log_path = utils.join_path((os.getenv('APPDATA')) or (mp.find_config_file(".")
 
 local cur_title, cur_path, cur_time
 local empty = false
-local pause = false
 local lastVideoTime
 local offset = -0.65
 local list_drawn = false
+local msg = require 'mp.msg'
 
 function esc_string(str)
     return str:gsub("([%p])", "%%%1")
@@ -256,9 +256,11 @@ function resume()
 			end
 
 			mp.commandv('seek', seekTime, 'absolute', 'exact')
+			msg.info('Resumed to the last logged position for this video')
 		end
 	else
 		mp.osd_message('No Resume Position')
+		msg.info('No resume position logged found for this video')
 	end
 	else
 		empty = true
@@ -292,16 +294,20 @@ function lastPlay()
 		if (cur_path ~= nil) then
 			mp.osd_message('Added Last Item Into Playlist:\n'..videoFile)
 			mp.commandv('loadfile', videoFile, 'append-play')
+			msg.info('Added last logged item shown below into playlist:\n'..videoFile)
 		else
 			if (empty == false) then
 				mp.osd_message('Loaded Last Item:\n'..videoFile)
+				msg.info('Loaded the last logged item shown below into mpv:\n'..videoFile)
 			else
 				mp.osd_message('Resumed Last Item:\n'..videoFile)
+				msg.info('Resumed the last logged item shown below into mpv:\n'..videoFile)
 			end
 			mp.commandv('loadfile', videoFile)
 		end
 	else
 		mp.osd_message('History is Empty')
+		msg.info('History log file is empty')
 	end
 end
 
@@ -372,10 +378,10 @@ end
 
 if o.auto_save then
     -- Using hook, as at the "end-file" event the playback position info is already unset.
-    -- mp.add_hook("on_unload", 9, function ()
-    mp.register_event("end-file", function()
+    mp.add_hook("on_unload", 50, function ()
+    	local end_time = math.floor(mp.get_property_number('time-pos') or 0)
+        cur_time = end_time
         if (cur_path ~= nil) then
-        timer:kill()
     --    local pos = mp.get_property("percent-pos")
     --    if tonumber(pos) <= o.auto_save_skip_past then
         write_log(false)
@@ -400,16 +406,6 @@ mp.register_event("file-loaded", function()
     unbind()
     cur_path = mp.get_property("path")
     cur_title = mp.get_property("media-title"):gsub("\"", "")
-    cur_time = 0
-    timer = mp.add_periodic_timer(1, function()
-		cur_time = cur_time + 1
-	end)
-
-    if (pause == true) then
-		timer:stop()
-	else
-		timer:resume()
-	end
 
     if (empty == true) then
 		local seekTime
@@ -430,25 +426,6 @@ mp.register_event("file-loaded", function()
 	end
 end)
 
-mp.register_event('playback-restart', function()
-    cur_time = 0
-	cur_time2 = math.floor(mp.get_property_number('time-pos') or 0)
-    cur_time = cur_time + cur_time2
-end)
-
-mp.observe_property('pause', 'bool', function(name, value)
-    if value then
-        if timer ~= nil then
-		timer:stop()
-        end
-        pause = true
-	else
-        if timer ~= nil then
-		timer:resume()
-        end
-        pause = false
-	end
-end)
 
 mp.add_key_binding(o.display_bind, "display-recent", display_list)
 mp.add_key_binding("ctrl+l", "lastPlay", lastPlay)
